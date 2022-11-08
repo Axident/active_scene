@@ -37,7 +37,7 @@ class SceneUpdateWorker(QThread):
         self.my_cells = set()
 
     def update_neighbors(self, source, depth=0):
-        if depth >= 500:
+        if depth >= 200:
             return source
         depth += 1
         time.sleep(.02)
@@ -60,6 +60,7 @@ class SceneUpdateWorker(QThread):
 
     def spread(self):
         neighbors = self.edges()
+        self.my_cells = set(neighbors)
         rng.shuffle(neighbors)
         expanded = []
         for n in neighbors[:int(len(neighbors)/10)]:
