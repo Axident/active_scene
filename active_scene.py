@@ -40,21 +40,37 @@ class SceneUpdateWorker(QThread):
         if depth >= 500:
             return source
         depth += 1
-        time.sleep(.01)
+        time.sleep(.02)
         self.my_cells.add(source)
-        neighbors = [n for n in source.neighbors if n.updated < 3 and n not in self.my_cells]
+        neighbors = [n for n in source.neighbors if n.updated < 1]
         if not neighbors:
-            neighbors = [n for n in self.my_cells.copy() if n.updated < 2]
+            neighbors = self.spread()
         if neighbors:
             item = rng.choice(neighbors)
-            if item.updated:
-                item.color = item.average_color([source.color, item.color])
-            else:
-                item.color = nudge_color(source.color)
-            item.updated += 1
+            if item not in self.my_cells:
+                item.color = item.bleed(force=True)
+            item.color = nudge_color(item.color)
             self.status.emit(item, self)
+            self.my_cells.add(item)
             source = self.update_neighbors(item, depth=depth)
         return source
+
+    def edges(self):
+        return [n for n in self.my_cells.copy() if len(n.get_surrounding_color()) != len(n.neighbors)]
+
+    def spread(self):
+        neighbors = self.edges()
+        rng.shuffle(neighbors)
+        expanded = []
+        for n in neighbors[:int(len(neighbors)/10)]:
+            fringes = n.neighbors
+            bleeder = rng.choice(fringes)
+            #bleeder.bleed(force=True)
+            bleeder.color = nudge_color(n.color)
+            self.my_cells.add(bleeder)
+            self.status.emit(bleeder, self)
+            expanded.append(bleeder)
+        return expanded
 
     def run(self):
         neighbors = True
@@ -64,17 +80,20 @@ class SceneUpdateWorker(QThread):
             row = rng.choice(list(range(len(self.parent.data))))
             items = self.parent.data[row]
             item = rng.choice(items)
-            if not item.updated:
+            if not item.color.sum():
                 item.color = random_color()
             self.my_cells.add(item)
             self.status.emit(item, self)
         while neighbors:
             item = self.update_neighbors(item)
-            neighbors = [n for n in self.my_cells.copy() if n.updated < 2]
-            item.bleed()
             self.status.emit(item, self)
-            for n in item.neighbors:
-                self.status.emit(n, self)
+            #copied = list(self.my_cells.copy())
+            #rng.shuffle(copied)
+            neighbors = self.edges()
+            if neighbors:
+                item = rng.choice(neighbors)
+                item.color = item.average_color(item.get_surrounding_color())
+                self.status.emit(item, self)
         self.finished.emit(self)
 
     def stop(self):
@@ -129,23 +148,11 @@ class Cell(QGraphicsRectItem):
             return numpy.array([0.0, 0.0, 0.0])
         return numpy.add.reduce(colors)/len(colors)
 
-    def bleed(self):
-        if self.updated < 1:
-            for n in self.neighbors:
-                surrounding = n.get_surrounding_color()
-                n.color = self.average_color(surrounding)
-
-    def update_color(self):
-        if rng.integers(self.chance, size=1)[0] == 0:
+    def bleed(self, force=False):
+        if not self.color.sum() or force:
             surrounding = self.get_surrounding_color()
-            if len(surrounding):
-                avg_neighbors = self.average_color(surrounding)
-                random_neighbor = rng.choice(surrounding)
-                self.color = rng.choice([random_neighbor, avg_neighbors], p=[.3, .7])
-                self.updated += 1
-        elif self.color.sum():
-            self.color = nudge_color(self.color)
-            self.updated += 1
+            self.color = self.average_color(surrounding)
+        return self.color
 
     def boundingRect(self):
         return QRect(0, 0, 2, 2)
@@ -195,8 +202,6 @@ class MyMainWindow(QMainWindow):
         self.graphix_view.setSceneRect(self.active_scene.sceneRect())
         self.graphix_view.fitInView(self.active_scene.sceneRect(), Qt.KeepAspectRatio)
         QCoreApplication.processEvents()
-        #self.graphix_view.ensureVisible(QRect(0, 0, (10 + 4*len(self.data)), (10 + 4*len(self.data))), 10, 10)
-        #self.active_scene.update()
 
         for i in list(range(3)):
             scene_updater = SceneUpdateWorker(parent=self)
@@ -216,19 +221,25 @@ class MyMainWindow(QMainWindow):
 
     def update_activity(self, item, thread):
         item.update()
-        if len(self.scene_updaters) < 8:
+        item.updated = item.updated + 1
+        if len(self.scene_updaters) < 5:
             chance = rng.integers(5000, size=1)[0]
             if chance < 2:
-                new_thread = SceneUpdateWorker(parent=self)
-                possible = [cell for cell in thread.my_cells if cell.updated < 2]
-                if len(possible) and chance == 0:
+                possible = []
+                for row in list(range(len(self.data))):
+                    items = self.data[row]
+                    for item in items:
+                        if not item.color.sum():
+                            possible.append(item)
+                if len(possible):
+                    new_thread = SceneUpdateWorker(parent=self)
                     new_thread.my_cells = thread.my_cells
                     new_thread.start_item = rng.choice(possible)
-                self.scene_updaters.append(new_thread)
-                new_thread.status.connect(self.update_activity)
-                new_thread.finished.connect(self.finish_activity)
-                new_thread.start()
-                print('active threads: %d' % len(self.scene_updaters))
+                    self.scene_updaters.append(new_thread)
+                    new_thread.status.connect(self.update_activity)
+                    new_thread.finished.connect(self.finish_activity)
+                    new_thread.start()
+                    print('active threads: %d' % len(self.scene_updaters))
 
     def finish_activity(self, thread):
         self.scene_updaters.remove(thread)
