@@ -20,6 +20,9 @@
       <property name="dragMode">
        <enum>QGraphicsView::ScrollHandDrag</enum>
       </property>
+      <property name="optimizationFlags">
+       <set>QGraphicsView::DontAdjustForAntialiasing|QGraphicsView::DontSavePainterState</set>
+      </property>
      </widget>
     </item>
    </layout>
